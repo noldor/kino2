@@ -1,0 +1,4 @@
+/hideable/data/*.db
+/hideable/data/*.log
+/hideable/templates_c/*.php
+
