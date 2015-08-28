@@ -37,8 +37,8 @@ class DataBase
 	protected function __construct()
 	{
 		$file = WIKIID . '.db';
-		$this->link = sqlite_open(DATA_DIR . $file, 0666, $error);
-		if($this->link == false){
+		$this->link = new SQLite3(DATA_DIR . $file, SQLITE3_OPEN_READWRITE | SQLITE3_OPEN_CREATE, $error);
+		if($this->link == false){ // todo: unreachable
 			clearstatcache();
 			if(is_writable(DATA_DIR) == false){
 				throw new FatalException('DATA_DIRへの書き込み権限がありません。', $error);
@@ -50,7 +50,15 @@ class DataBase
 				throw new FatalException('DBファイルを開けませんでした。', $error);
 			}
 		}
-		sqlite_busy_timeout($this->link, 5000);
+		$this->link->busyTimeout(5000);
+		$this->link->createFunction('php', function(){
+			$args = func_get_args();
+			if (count($args) <= 0) {
+				return null;
+			}
+			$func = array_shift($args);
+			return call_user_func_array($func, $args);
+		});
 	}
 	
 	
@@ -63,7 +71,7 @@ class DataBase
 			$this->query('ROLLBACK');
 		}
 		if($this->link != false){
-			sqlite_close($this->link);
+			$this->link->close();
 		}
 	}
 	
@@ -76,7 +84,7 @@ class DataBase
 	 */
 	function query($query)
 	{
-		$result = sqlite_unbuffered_query($this->link, $query);
+		$result = $this->link->query($query);
 		if($result == false){
 			throw new DBException('クエリを実行できませんでした。', $query, $this->link);
 		}
@@ -92,7 +100,7 @@ class DataBase
 	 */
 	function exec($query)
 	{
-		$result = sqlite_exec($this->link, $query);
+		$result = $this->link->exec($query);
 		if($result == false){
 			throw new DBException('クエリを実行できませんでした。', $query, $this->link);
 		}
@@ -110,7 +118,7 @@ class DataBase
 		//空文字列をsqlite_escape_string()に渡すと謎の3バイトが帰ってくる(PHP5.0.0RC2以下)。
 		//	http://bugs.php.net/bug.php?id=29339
 		//	http://bugs.php.net/bug.php?id=29395
-		return $str == '' ? '' : sqlite_escape_string($str);
+		return $str == '' ? '' : SQLite3::escapeString($str);
 	}
 	
 	
@@ -121,7 +129,7 @@ class DataBase
 	 */
 	function changes()
 	{
-		return sqlite_changes($this->link);
+		return $this->link->changes();
 	}
 	
 	
@@ -131,7 +139,7 @@ class DataBase
 	function begin()
 	{
 		if($this->transaction == 0){
-			$this->query("BEGIN TRANSACTION");
+			$this->exec("BEGIN TRANSACTION");
 		}
 		$this->transaction++;
 	}
@@ -144,7 +152,7 @@ class DataBase
 	{
 		$this->transaction--;
 		if($this->transaction == 0){
-			$this->query("COMMIT");
+			$this->exec("COMMIT");
 		}
 	}
 	
@@ -165,28 +173,18 @@ class DataBase
 	/**
 	 * ユーザ関数を登録する（sqlite_create_function()ラッパー）。
 	 */
-	function create_function($function_name, $callback, $num_args = null)
+	function create_function($function_name, $callback, $num_args = -1)
 	{
-		if($num_args === null){
-			return sqlite_create_function($this->link, $function_name, $callback);
-		}
-		else{
-			return sqlite_create_function($this->link, $function_name, $callback, $num_args);
-		}
+		return $this->link->createFunction($function_name, $callback, $num_args);
 	}
 	
 	
 	/**
 	 * 集約UDFを登録する（sqlite_create_aggregate()ラッパー）。
 	 */
-	function create_aggregate($function_name, $step_func, $finalize_func, $num_args = null)
+	function create_aggregate($function_name, $step_func, $finalize_func, $num_args = -1)
 	{
-		if($num_args === null){
-			return sqlite_create_aggregate($this->link, $function_name, $step_func, $finalize_func);
-		}
-		else{
-			return sqlite_create_aggregate($this->link, $function_name, $step_func, $finalize_func, $num_args);
-		}
+		return $this->link->createAggregate($function_name, $step_func, $finalize_func, $num_args);
 	}
 	
 	
@@ -198,7 +196,7 @@ class DataBase
 	 */
 	function fetch($result)
 	{
-		$ret = sqlite_fetch_array($result);
+		$ret = $result->fetchArray();
 		if(get_magic_quotes_runtime()){
 			return array_map('stripslashes', $ret);
 		}
@@ -214,9 +212,9 @@ class DataBase
 	 */
 	function fetchall($result)
 	{
-		$ret = sqlite_fetch_all($result);
-		if(get_magic_quotes_runtime()){
-			return map('stripslashes', $ret);
+		$ret = array();
+		while ($res = $this->fetch($result)) {
+			$ret[] = $res;
 		}
 		return $ret;
 	}
@@ -231,12 +229,8 @@ class DataBase
 	function fetchsinglearray($result)
 	{
 		$ret = array();
-		while(($str = sqlite_fetch_string($result)) !== false){
-			$ret[] = $str;
-		}
-		
-		if(get_magic_quotes_runtime()){
-			return array_map('stripslashes', $ret);
+		while($res = $this->fetch($result)){
+			$ret[] = $str[0];
 		}
 		return $ret;
 	}
@@ -258,7 +252,7 @@ class DBException extends FatalException
 			$mes = 'DBファイルへの書き込み権限がありません。' . $mes;
 		}
 		
-		parent::__construct($mes, linetrim($hiddenmes . "\n") . sqlite_error_string(sqlite_last_error($dblink)));
+		parent::__construct($mes, linetrim($hiddenmes . "\n") . $dblink->lastErrorMsg());
 	}
 }
 
