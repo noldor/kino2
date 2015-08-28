@@ -37,7 +37,7 @@ class DataBase
 	protected function __construct()
 	{
 		$file = WIKIID . '.db';
-		$this->link = new SQLite3(DATA_DIR . $file, SQLITE3_OPEN_READWRITE | SQLITE3_OPEN_CREATE, $error);
+		$this->link = new SQLite3(DATA_DIR . $file, SQLITE3_OPEN_READWRITE | SQLITE3_OPEN_CREATE);
 		if($this->link == false){ // todo: unreachable
 			clearstatcache();
 			if(is_writable(DATA_DIR) == false){
