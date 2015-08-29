@@ -36,19 +36,11 @@ class DataBase
 	 */
 	protected function __construct()
 	{
-		$file = WIKIID . '.db';
-		$this->link = new SQLite3(DATA_DIR . $file, SQLITE3_OPEN_READWRITE | SQLITE3_OPEN_CREATE);
-		if($this->link == false){ // todo: unreachable
-			clearstatcache();
-			if(is_writable(DATA_DIR) == false){
-				throw new FatalException('DATA_DIRへの書き込み権限がありません。', $error);
-			}
-			else if(is_writable(DATA_DIR . $file) == false){
-				throw new FatalException('DBファイルへの書き込み権限がありません。', $error);
-			}
-			else{
-				throw new FatalException('DBファイルを開けませんでした。', $error);
-			}
+		try {
+			$file = WIKIID . '.db';
+			$this->link = new SQLite3(DATA_DIR . $file, SQLITE3_OPEN_READWRITE | SQLITE3_OPEN_CREATE);
+		} catch (Exception $ex) {
+			throw new FatalException('DBファイルを開けませんでした。', (string)$ex);
 		}
 		$this->link->busyTimeout(5000);
 		$this->link->createFunction('php', function(){
