@@ -107,10 +107,7 @@ class DataBase
 	 */
 	function escape($str)
 	{
-		//空文字列をsqlite_escape_string()に渡すと謎の3バイトが帰ってくる(PHP5.0.0RC2以下)。
-		//	http://bugs.php.net/bug.php?id=29339
-		//	http://bugs.php.net/bug.php?id=29395
-		return $str == '' ? '' : SQLite3::escapeString($str);
+		return SQLite2Escape::escape_string($str);
 	}
 	
 	
@@ -189,6 +186,11 @@ class DataBase
 	function fetch($result)
 	{
 		$ret = $result->fetchArray();
+		if(!is_array($ret)){
+			return $ret;
+		}
+
+		$ret = array_map(array('SQLite2Escape', 'unescape_string'), $ret);
 		if(get_magic_quotes_runtime()){
 			return array_map('stripslashes', $ret);
 		}
@@ -249,4 +251,101 @@ class DBException extends FatalException
 }
 
 
-?>
+/**
+ * SQLite2のエスケープ系関数の再実装
+ *
+ * SQLite3::escapeString()はバイナリセーフではないため使えない。
+ *   https://bugs.php.net/bug.php?id=63419
+ *   https://bugs.php.net/bug.php?id=62361
+ */
+class SQLite2Escape
+{
+	static function escape_string($str)
+	{
+		$str = (string)$str;
+		if(strlen($str) <= 0){
+			return '';
+		}
+
+		if($str[0] == "\x01" || strpos($str, "\0") !== false){
+			return "\x01" . self::encode_binary($str);
+		}
+		return str_replace("'", "''", $str);
+	}
+
+	static function unescape_string($str)
+	{
+		$str = (string)$str;
+		if(strlen($str) <= 0){
+			return '';
+		}
+
+		if($str[0] == "\x01"){
+			return self::decode_binary(substr($str, 1));
+		}
+		return $str;
+	}
+
+	static function encode_binary($str)
+	{
+		$str = (string)$str;
+		if(strlen($str) <= 0){
+			return 'x';
+		}
+
+		// 文字列への[]アクセスはPHPマニュアル「文字列への文字単位のアクセスと修正」参照
+		// http://php.net/manual/ja/language.types.string.php#language.types.string.substr
+		$cnt = array_fill(0, 256, 0);
+		for($i = strlen($str) - 1; $i >= 0; $i--){
+			$cnt[ord($str[$i])]++;
+		}
+
+		$min = strlen($str);
+		$e = 0;
+		for($i = 1; $i < 256; $i++){
+			if($i == ord("'")){
+				continue;
+			}
+			$sum = $cnt[$i] + $cnt[($i+1)&0xff] + $cnt[($i+ord("'"))&0xff];
+			if($sum < $min){
+				$min = $sum;
+				$e = $i;
+				if($min == 0){
+					break;
+				}
+			}
+		}
+		$ret = chr($e);
+		$len = strlen($str);
+		for($i = 0; $i < $len; $i++){
+			$x = chr((ord($str[$i]) - $e) & 0xff);
+			if ($x == "\0" || $x == "\x01" || $x == "'") {
+				$ret .= "\x01";
+				$x = chr((ord($x)+1) & 0xff);
+			}
+			$ret .= $x;
+		}
+		return $ret;
+	}
+
+	static function decode_binary($str)
+	{
+		$str = (string)$str;
+		if(strlen($str) <= 0){
+			return '';
+		}
+
+		$e = ord($str[0]);
+		$len = strlen($str);
+		$ret = '';
+		for($i = 1; $i < $len; $i++){
+			if($str[$i] == "\x01"){
+				$c = ord($str[++$i]) - 1;
+			} else {
+				$c = ord($str[$i]);
+			}
+			$ret .= chr(($c + $e) & 0xff);
+		}
+		return $ret;
+	}
+}
